@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>余烬世界机器人登录签名</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background:#171310; color:#f3e9d8; margin:0; padding:20px; }
+  .card { max-width:560px; margin:0 auto; background:#221b15; border:1px solid #4a3a28; border-radius:14px; padding:22px; }
+  h1 { font-size:20px; margin:0 0 6px; color:#ffb066; }
+  .sub { color:#cbbfa9; font-size:13px; line-height:1.6; }
+  .msg { background:#120e0a; border:1px solid #3a2d1e; border-radius:10px; padding:12px; font-size:12px; line-height:1.6; white-space:pre-wrap; word-break:break-all; color:#d8cbb2; margin:14px 0; }
+  button { width:100%; background:#e8762c; color:#fff; border:0; border-radius:12px; padding:16px; font-size:18px; font-weight:700; cursor:pointer; }
+  button:disabled { background:#6b543f; }
+  .status { margin-top:14px; font-size:14px; line-height:1.7; }
+  .ok { color:#8be08b; } .err { color:#ff9a8a; } .warn { color:#ffd28a; }
+  .sig { background:#0e1a0e; border:1px solid #2e4a2e; border-radius:10px; padding:12px; font-size:12px; word-break:break-all; white-space:pre-wrap; margin-top:10px; }
+  #countdown { color:#ffd28a; font-weight:700; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>余烬世界 · 机器人登录签名</h1>
+  <div class="sub">
+    这一步只是让游戏确认“这个钱包是你本人”，<b>不转账、不授权、不花钱</b>。<br>
+    口令有效期还剩 <span id="countdown">--:--</span>，过期就告诉 Muse 换新的。<br>
+    请确认你是在 <b>OKX 钱包 App 的内置浏览器</b>里打开本页。
+  </div>
+  <div class="msg" id="msgBox">正在读取签名原文…</div>
+  <button id="signBtn">连接钱包并签名</button>
+  <div class="status" id="status"></div>
+  <div class="sig" id="sigBox" style="display:none"></div>
+  <button id="copyBtn" style="display:none;margin-top:10px;background:#3f7a3f">复制签名</button>
+</div>
+<script>
+(function () {
+  var ADDRESS = '0x564465792c6eAA89d517D53260B1bA59f2e3706c';
+  var statusEl = document.getElementById('status');
+  var sigBox = document.getElementById('sigBox');
+  var copyBtn = document.getElementById('copyBtn');
+  var signBtn = document.getElementById('signBtn');
+  var msgBox = document.getElementById('msgBox');
+  var cdEl = document.getElementById('countdown');
+
+  function setStatus(html, cls) { statusEl.innerHTML = html; statusEl.className = 'status ' + (cls || ''); }
+  function getParam(name) {
+    var q = window.location.search.substring(1).split('&');
+    for (var i = 0; i < q.length; i++) {
+      var kv = q[i].split('=');
+      if (decodeURIComponent(kv[0]) === name) return decodeURIComponent(kv.slice(1).join('='));
+    }
+    return null;
+  }
+  function b64decodeUtf8(b64) {
+    var bin = window.atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    if (window.TextDecoder) return new TextDecoder('utf-8').decode(bytes);
+    var s = '';
+    for (var j = 0; j < bytes.length; j++) s += String.fromCharCode(bytes[j]);
+    return decodeURIComponent(escape(s));
+  }
+  function hexOfUtf8(str) {
+    var bytes;
+    if (window.TextEncoder) bytes = new TextEncoder().encode(str);
+    else { var u = unescape(encodeURIComponent(str)); bytes = new Uint8Array(u.length); for (var i = 0; i < u.length; i++) bytes[i] = u.charCodeAt(i); }
+    var hex = '0x';
+    for (var k = 0; k < bytes.length; k++) { var h = bytes[k].toString(16); if (h.length < 2) h = '0' + h; hex += h; }
+    return hex;
+  }
+
+  var MESSAGE = null, EXP = 0;
+  try {
+    var m = getParam('m');
+    if (m) MESSAGE = b64decodeUtf8(m);
+    EXP = parseInt(getParam('exp') || '0', 10);
+  } catch (e) { /* ignore */ }
+
+  if (MESSAGE) { msgBox.textContent = MESSAGE; }
+  else { msgBox.textContent = '链接里没有签名原文，请让 Muse 重新发链接。'; }
+
+  function tick() {
+    if (!EXP) { cdEl.textContent = '--:--'; return; }
+    var left = EXP - Date.now();
+    if (left <= 0) { cdEl.textContent = '已过期'; setStatus('❌ 口令已过期，告诉 Muse 换个新链接再签。', 'err'); return; }
+    var s = Math.floor(left / 1000), mm = Math.floor(s / 60), ss = s % 60;
+    cdEl.textContent = mm + ':' + (ss < 10 ? '0' : '') + ss;
+    setTimeout(tick, 500);
+  }
+  tick();
+
+  var provider = null;
+  function findProvider() {
+    if (window.okxwallet) return window.okxwallet;
+    if (window.ethereum) return window.ethereum;
+    return null;
+  }
+  provider = findProvider();
+  if (!provider) {
+    setStatus('正在等钱包出现…（如果你不是在 OKX 钱包 App 里打开的本页，请去 OKX 里打开）', 'warn');
+    var tries = 0;
+    var iv = setInterval(function () {
+      provider = findProvider();
+      tries++;
+      if (provider) { clearInterval(iv); setStatus('✅ 已检测到钱包，点上面的按钮签名。', 'ok'); }
+      else if (tries > 50) { clearInterval(iv); setStatus('❌ 还是没检测到钱包。请确认是在 OKX 钱包 App 的内置浏览器里打开本页，普通浏览器里是没有钱包的。', 'err'); }
+    }, 300);
+    window.addEventListener('ethereum#initialized', function () { provider = findProvider(); }, false);
+  } else {
+    setStatus('✅ 已检测到钱包，点上面的按钮签名。', 'ok');
+  }
+
+  function rpc(p, method, params) {
+    if (p.request) return p.request({ method: method, params: params });
+    return new Promise(function (resolve, reject) {
+      p.sendAsync({ jsonrpc: '2.0', id: 1, method: method, params: params }, function (err, res) {
+        if (err) reject(err); else if (res && res.error) reject(res.error); else resolve(res && res.result);
+      });
+    });
+  }
+
+  signBtn.onclick = function () {
+    if (!MESSAGE) { setStatus('❌ 链接里没有签名原文，让 Muse 重新发。', 'err'); return; }
+    if (EXP && Date.now() > EXP) { setStatus('❌ 口令已过期，告诉 Muse 换新链接。', 'err'); return; }
+    provider = provider || findProvider();
+    if (!provider) { setStatus('❌ 没检测到钱包，请在 OKX 钱包 App 里打开本页。', 'err'); return; }
+    signBtn.disabled = true;
+    setStatus('正在连接钱包…', '');
+    rpc(provider, 'eth_requestAccounts', []).then(function (accounts) {
+      var acct = (accounts && accounts[0]) || '';
+      if (!acct) throw new Error('钱包没有返回账号');
+      if (acct.toLowerCase() !== ADDRESS.toLowerCase()) {
+        setStatus('⚠️ 当前钱包地址是 ' + acct + '，不是游戏账号 ' + ADDRESS + '。请在 OKX 里切到游戏用的那个钱包再签。', 'warn');
+        signBtn.disabled = false;
+        return null;
+      }
+      setStatus('账号对上了，正在切换到 X Layer 网络…', '');
+      return rpc(provider, 'eth_chainId', []).then(function (cid) {
+        if (cid === '0xc4' || cid === 196) return null;
+        return rpc(provider, 'wallet_switchEthereumChain', [{ chainId: '0xc4' }]).catch(function () { return null; });
+      }).then(function () {
+        setStatus('请在钱包弹窗里点「确认」签名…', '');
+        return rpc(provider, 'personal_sign', [hexOfUtf8(MESSAGE), acct]);
+      });
+    }).then(function (sig) {
+      if (!sig) return;
+      setStatus('✅ 签名成功！点「复制签名」，把整段签名发给 Muse。', 'ok');
+      sigBox.style.display = 'block';
+      sigBox.textContent = sig;
+      copyBtn.style.display = 'block';
+      copyBtn.onclick = function () {
+        function done() { copyBtn.textContent = '已复制，去发给 Muse'; }
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(sig).then(done, done);
+        else {
+          var ta = document.createElement('textarea');
+          ta.value = sig; document.body.appendChild(ta); ta.select();
+          try { document.execCommand('copy'); } catch (e) {}
+          document.body.removeChild(ta); done();
+        }
+      };
+      signBtn.disabled = false;
+    }).catch(function (e) {
+      var msg = (e && e.message) ? e.message : String(e);
+      setStatus('❌ 签名没成功：' + msg + '。如果是在钱包里点了取消，重新点按钮再签一次就行。', 'err');
+      signBtn.disabled = false;
+    });
+  };
+})();
+</script>
+</body>
+</html>
